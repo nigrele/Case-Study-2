@@ -1,0 +1,9 @@
+T129501-MRAS
+result from expansion with number of genes  5
+MRAS-T129501 rank in Open_Target:23
+rank	gene	isoform
+0	MSRB2	T003532
+1	ERCC6,p3	T005096
+2	MRAS	T129506
+3	NFKB1	T138436
+4	RWDD1	T158201

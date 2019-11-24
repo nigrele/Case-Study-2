@@ -1,0 +1,10 @@
+SelectIsoformByGeneImportance.py
+
+	file fisso: hgnc_cc_zero... (serve per creare il dizionario per la traduzione gei geni)
+
+	prende la matrice di BOINC (genehome_PC-IM_15Nov.csv)
+	prende una lista di geni rankati per importanza (Open_target_genes_sorted.csv)
+
+	Ritorna una cartella di file (Result_with_max:300_min:5_step:1) contenente i risultati.
+	I geni più importanti (es APOE) avranno un numero maggiore di isoforme e via di seguito
+ 

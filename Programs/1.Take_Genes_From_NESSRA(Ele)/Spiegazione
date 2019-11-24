@@ -1,0 +1,7 @@
+ExpansionTakenFromDrive.py:
+	Prende le nostre isofomre mandate (7_Genes_Already, sentIsoform.csv)
+	Prende la matrice di BOIN (genehome_PC-IM_15Nov.csv
+	
+	Ritorna le expansions nella cartella experiment results
+	
+	Totale: 175 isoforme (151 + 24) 

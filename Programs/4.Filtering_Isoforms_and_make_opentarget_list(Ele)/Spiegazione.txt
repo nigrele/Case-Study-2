@@ -1,0 +1,12 @@
+FileringIsoforms.py:
+	Prende la cartella con i risultati del punto (3) (Result_with_max...)
+	Prende le Isoforme rankate per lo score, risultato del punto 2 (Isoform_score_ranked.txt)
+
+	Output : lista di geni da inseire in opentarget (Genes_for_OpenTarget.txt)
+	Di default il programma prende 150 geni, ma si può cambiare con i parametri
+
+	Va speficato se la lista di geni iniziale è rank o score based
+
+
+
+Nel file Genes_for_OpenTarget.txt ci sono 500 geni, ne aveva trovati 11807.

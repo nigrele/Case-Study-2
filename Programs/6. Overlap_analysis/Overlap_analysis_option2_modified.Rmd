@@ -1,0 +1,174 @@
+---
+title: "Overlap Analysis"
+output:
+  html_document:
+    df_print: paged
+---
+
+# WJS implementation
+
+```{r}
+fill_set <- function(a, b) {
+    names_a_minus_b <- setdiff(names(b), names(a))
+    la <- length(a)
+    la_miss <- length(names_a_minus_b)
+    r_miss <- ((la + la_miss)*(la + la_miss + 1) - la*(la+1))/(2*la_miss)
+    miss <- rep(r_miss, la_miss)
+    names(miss) <- names_a_minus_b
+    #return
+    c(a, miss)
+}
+
+WJS <- function(a, b) {
+    a <- fill_set(a, b)
+    b <- fill_set(b, a)
+    b <- b[names(a)]
+    d <- cbind(a, b)
+    #su colonne
+    d <- apply(d, 2, function(x) length(x) - x + 1)
+    #su righe
+    res <- apply(d, 1, function(x) c(min(x), max(x)))
+    #return
+    sum(res[1, ])/sum(res[2, ])
+}
+```
+
+# Option 2
+
+## Procedure
+
+Map isoforms to genes last:
+
+1. map genes associated to CAD (Opentarget) to their isoforms. Rank of all
+isoforms of a gene = rank of the gene
+2. use weighted version of Jaccard index to measure overlap between the each
+backward expansion (in isoforms) and list of CAD isoforms
+3. use permutational approach to issue p-values
+4. find isoforms with a significant overlap, then map them to genes
+
+## Implementation
+
+### Local files
+
+```{r}
+cad_genes_file <-"Open_Target.csv"
+iso_mapping_file <- "Iso-Gene_Mapping.csv"
+nessra_dir <- "./Already_In_Boinc/"
+```
+
+### Preprocess data
+
+```{r}
+cad_genes <- read.csv(cad_genes_file, sep = ',')[, c(1, 4)]
+isoforms_map <- read.csv(iso_mapping_file, sep = '\t', stringsAsFactors = FALSE)
+colnames(cad_genes) <- c('gene', 'association_score')
+
+all_isoforms <- unique(isoforms_map$isoform)
+
+# simpler way to map cad gene to isoforms
+
+cad_isoform_mapping <- merge(cad_genes, isoforms_map, by = 'gene')
+ranked_cad_isoforms <- rank(cad_isoform_mapping$association_score)
+ranked_cad_isoforms <- length(ranked_cad_isoforms) - ranked_cad_isoforms + 1
+names(ranked_cad_isoforms) <- cad_isoform_mapping$isoform
+
+# isoform to gene mapping, useful for mapping significant isoforms to genes
+
+isoform_gene_mapping <- isoforms_map$gene
+names(isoform_gene_mapping) <- isoforms_map$isoform
+
+# read nessra expansion files
+
+expansion_files <- paste0(nessra_dir, list.files(nessra_dir))
+nessra_iso_results <- lapply(expansion_files, read.csv, skip = 1,
+    stringsAsFactors = FALSE)
+
+# function to format data from nessra expansion files
+
+library(stringr)
+
+get_expansion_form_file <- function(file) {
+  
+  iso_names <- str_replace(file$node, "t", "T")
+  iso_ranks <- rank(file$Frel)
+  names(iso_ranks) <- iso_names
+  length(iso_ranks) - iso_ranks + 1
+}
+
+nessra_iso_results <- lapply(nessra_iso_results, get_expansion_form_file)
+
+# name each ranked expansion vector with the name of the expanded isoform
+
+isoform_names <- lapply(expansion_files, readLines, n = 1)
+isoform_names <- str_match(isoform_names, "T[0-9]{6}")
+names(nessra_iso_results) <- isoform_names
+```
+
+## Compute WJS scores
+
+```{r}
+WJS_results <- vapply(nessra_iso_results, WJS, numeric(1), ranked_cad_isoforms)
+```
+
+
+## Create null distributions
+```{r}
+# len = length of the nessra expansion i.e. backward expansion
+# times = how many random samples
+# ref = reference gene list, i.e. CAD isoforms i.e.
+# set = set of names to sample from, i.e. names in the FANTOM dataset
+all_iso<-unique(isoforms_map$isoform)
+
+make_null_cdf <- function(len, times, ref, set) {
+    random_samples <- replicate(times, {
+        random_sample <- seq_len(len)
+        names(random_sample) <- sample(set, len)
+        random_sample
+    }, simplify = FALSE)
+    
+    ecdf(vapply(random_samples, WJS, numeric(1), ref))
+}
+```
+
+### Computing null distributions for each length.
+
+```{r}
+library(parallel)
+
+lens <- vapply(nessra_iso_results, length, numeric(1))
+
+times <- 2000
+
+cores <- 7 # number of cores
+
+# Go parallel
+cl <- makePSOCKcluster(cores)
+clusterExport(cl, c("WJS", "fill_set")) # make these visible to workers
+null_distributions <- parLapply(cl, unique(lens), make_null_cdf,
+    times, ranked_cad_isoforms, all_isoforms)
+stopCluster(cl)
+
+names(null_distributions) <- unique(lens)
+```
+
+### Computing p_values.
+
+```{r}
+# you only extract the distribution for a certain length
+p_values <- Map(function(x, y) 1 - null_distributions[[as.character(y)]](x),
+    WJS_results, lens)
+# multiple hypothesis test correction
+p_adjusted <- p.adjust(p_values, "BH")
+
+# significant genes, alpha to be decided
+alpha <- 0.05
+significant_isoforms <- names(WJS_results)[p_adjusted < alpha]
+significant_genes <- isoform_gene_mapping[significant_isoforms]
+```
+
+##Save data
+
+```{r}
+save(WJS_results, p_values, p_adjusted, null_distributions,
+    file = "Option2_already_in_boinc.RData")
+```

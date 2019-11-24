@@ -1,0 +1,6 @@
+ScoringAllIsoform.py
+	Prende tutte le isoforme delle espansioni nella cartella experiment results (175 espansioni).
+	Somma gli score delle isoforme
+	
+	Ritorna un file (in questo caso Isoforms_score_ranked.txt) contenente le isoforme in ordine di importanza.
+

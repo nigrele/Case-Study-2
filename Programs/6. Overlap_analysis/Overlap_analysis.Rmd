@@ -1,0 +1,209 @@
+---
+title: "Overlap Analysis"
+output: html_notebook
+---
+
+# WJS implementation
+
+```{r}
+fill_set <- function(a, b) {
+    names_a_minus_b <- setdiff(names(b), names(a))
+    la <- length(a)
+    la_miss <- length(names_a_minus_b)
+    r_miss <- ((la + la_miss)*(la + la_miss + 1) - la*(la+1))/(2*la_miss)
+    miss <- rep(r_miss, la_miss)
+    names(miss) <- names_a_minus_b
+    c(a, miss)
+}
+
+WJS <- function(a, b) {
+    a <- fill_set(a, b)
+    b <- fill_set(b, a)
+    b <- b[names(a)]
+    d <- cbind(a, b)
+    d <- apply(d, 2, function(x) length(x) - x + 1)
+    res <- apply(d, 1, function(x) c(min(x), max(x)))
+    sum(res[1, ])/sum(res[2, ])
+}
+```
+
+# Option 1
+
+## Procedure
+
+Map isoforms to genes first:
+
+1. map isoforms to genes. rank of gene = max rank of its isoforms
+2. use weighted version of Jaccard index to measure overlap between the 2 ranked
+lists of genes
+3. use permutational approach to issue p-values
+4. Find genes with a significant overlap
+
+## Implementation
+
+### Initial data
+
+- `ranked_cad_genes`: ranked list of genes associated with CAD, as a named
+numeric vector
+- `isoform_gene_mapping`: table mapping isoforms to genes, as a data.frame
+- `all_genes`: complete list of genes in the FANTOM dataset
+- `nessra_gene_results`: list of ranked genes resulting from expansion, as a
+list of named numeric vectors
+
+```{r, include=FALSE}
+# dummy values
+
+# ranked_cad_genes <- 1:100
+# names(ranked_cad_genes) <- sample(1:20000, 100)
+# 
+# all_genes <- as.character(1:20000)
+# 
+# l1 <- 1:120
+# names(l1) <- sample(all_genes, 120)
+# l2 <- 1:140
+# names(l2) <- sample(all_genes, 140)
+# l3 <- 1:200
+# names(l3) <- sample(all_genes, 200)
+# l4 <- 1:120
+# names(l4) <- sample(all_genes, 120)
+# nessra_gene_results <- list(l1, l2, l3, l4)
+```
+
+<span style="color:red"><b>CHANGE THIS!!!</b></span>
+
+```{r}
+# Local files
+
+cad_genes_file <- "targets_associated_with_coronary_artery_disease.csv"
+iso_mapping_file <- "Iso-Gene_Mapping.csv"
+nessra_dir <- "./examples/"
+```
+
+### Data preprocessing
+
+```{r}
+# Actual data
+
+library(stringr)
+
+cad_genes <- read.csv(cad_genes_file, sep= ",")[, c(1,3)]
+ranked_cad_genes <- rank(cad_genes[, 2])
+ranked_cad_genes <- length(ranked_cad_genes) - ranked_cad_genes + 1
+names(ranked_cad_genes) <- cad_genes[, 1]
+
+mapping <- read.csv(iso_mapping_file, sep = "\t",
+    stringsAsFactors = FALSE)
+isoform_gene_mapping <- mapping$gene
+names(isoform_gene_mapping) <- mapping$isoform
+remove(mapping)
+
+all_genes <- unique(isoform_gene_mapping)
+
+expansion_files <- paste0(nessra_dir, list.files(nessra_dir))
+nessra_gene_results <- lapply(expansion_files, read.csv, skip = 1,
+    stringsAsFactors = FALSE)
+
+# map isoforms to genes and rank
+iso_to_gene <- function(nessra_res, map_i2g) {
+    iso_name <- str_replace(nessra_res$node, "t", "T")
+    rownames(nessra_res) <- iso_name
+    genes <- map_i2g[iso_name]
+    genes <- genes[genes != ""]
+    map_g2i <- split(names(genes), genes)
+    gene_frel <- vapply(unique(genes), function(g)
+        max(nessra_res[map_g2i[[g]], "Frel"]), numeric(1), USE.NAMES = TRUE)
+    length(gene_frel) - rank(gene_frel) + 1
+}
+
+nessra_gene_results <- lapply(nessra_gene_results, iso_to_gene,
+    isoform_gene_mapping)
+
+
+isoform_names <- lapply(expansion_files, readLines, n = 1)
+isoform_names <- str_match(isoform_names, "T[0-9]{6}")
+names(nessra_gene_results) <- isoform_names
+```
+
+### Make null distributions
+
+This function computes empirical cumulative distribution functions (ECDF) of the
+WJS of `times` random lists of length `len`, sampled from `set` and compared
+with `ref`.
+
+```{r}
+# len = length of the nessra expansion
+# times = how many random samples
+# ref = reference gene list, i.e. CAD genes
+# set = set of names to sample from, i.e. names in the FANTOM dataset
+
+make_null_cdf <- function(len, times, ref, set) {
+    random_samples <- replicate(times, {
+        random_sample <- seq_len(len)
+        names(random_sample) <- sample(set, len)
+        random_sample
+    }, simplify = FALSE)
+    
+    ecdf(vapply(random_samples, WJS, numeric(1), ref))
+}
+```
+
+<span style="color:red"><b>CHANGE THIS!!!</b></span>
+
+```{r}
+cores <- 7 # number of cores
+```
+
+Compute null distributions for each length.
+
+```{r}
+library(parallel)
+
+lens <- vapply(nessra_gene_results, length, numeric(1))
+
+times <- 2000
+
+# Go parallel
+cl <- makePSOCKcluster(cores)
+clusterExport(cl, c("WJS", "fill_set")) # make these visible to workers
+null_distributions <- parLapply(cl, unique(lens), make_null_cdf,
+    times, ranked_cad_genes, all_genes)
+stopCluster(cl)
+
+names(null_distributions) <- unique(lens)
+```
+
+### Compute WJS and p-values
+
+```{r}
+WJS_results <- vapply(nessra_gene_results, WJS, numeric(1), ranked_cad_genes)
+p_values <- Map(function(x, y) 1 - null_distributions[[as.character(y)]](x),
+    WJS_results, lens)
+# multiple hypothesis test correction
+p_adjusted <- p.adjust(p_values, "BH")
+```
+
+Save data
+
+```{r}
+save(WJS_results, p_values, p_adjusted, null_distributions,
+    file = "Option1.RData")
+```
+
+Then we can do furter analyses on these p-values. 
+
+# Option 2
+
+## Procedure
+
+Map isoforms to genes last:
+
+1. map genes associated to CAD to their isoforms. Rank of all isoforms of a gene
+= rank of the gene. (?) Do scaling of the ranks
+2. use weighted version of Jaccard index to measure overlap between the 2 ranked
+lists of isoforms
+3. use permutational approach to issue p-values
+4. find isoforms with a significant overlap, then map them to genes
+
+## Implementation
+
+Pretty much the same, but the isoforms are mapped to genes in the last step.
